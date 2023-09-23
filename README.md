@@ -5,7 +5,7 @@ Official PyTorch implementation for ICCV23 paper **LexLIP: Lexicon-Bottlenecked 
 [[`arXiv`](https://arxiv.org/abs/2302.02908)]
 
 ## News :tada:
-- 📣 Update - The codes are on the way.
+- 📣 Update - The codes are on the way (before 2023/09/30).
 - 📣 July 2023 - Paper Accepted by ICCV-23.
 - 📣 Feb 2023 - Release the pre-print on [arXiv](https://arxiv.org/abs/2305.04757).
 
