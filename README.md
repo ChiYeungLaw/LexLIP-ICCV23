@@ -2,13 +2,12 @@
 
 Official PyTorch implementation for ICCV23 paper **LexLIP: Lexicon-Bottlenecked Language-Image Pre-Training for Large-Scale Image-Text Sparse Retrieval**.
 
-[[`arXiv`](https://arxiv.org/abs/2302.02908)]
+[[`paper`](https://openaccess.thecvf.com/content/ICCV2023/papers/Luo_LexLIP_Lexicon-Bottlenecked_Language-Image_Pre-Training_for_Large-Scale_Image-Text_Sparse_Retrieval_ICCV_2023_paper.pdf)]
 
 ## News :tada:
 - 📣 Readme is coming soon (before 2023.10.14). 
 - 📣 Sep 2023 - Codes Released.
 - 📣 July 2023 - Paper Accepted by ICCV-23.
-- 📣 Feb 2023 - Release the pre-print on [arXiv](https://arxiv.org/abs/2305.04757).
 
 ## LexLIP Training
 
