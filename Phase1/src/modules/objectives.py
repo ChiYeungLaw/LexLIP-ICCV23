@@ -131,6 +131,7 @@ def compute_irtr_recall(pl_module):
     for _b in tqdm.tqdm(image_loader, desc="image prefetch loop"):
         img_index = _b["img_index"][0]
         if img_index not in image_preload:
+
             image_features = _b["image_features"].to(pl_module.device)
             img_reps = pl_module.encode_image(image_features) # [bsz, 768]
             image_preload[img_index] = 1
@@ -176,8 +177,6 @@ def compute_irtr_recall(pl_module):
     scores = torch.tensor(gather_rank_scores)
     scores = scores.view(len(iids), -1)
 
-    ###
-
     topk5 = scores.topk(5, dim=0)
     topk5_iids = iids[topk5.indices] # [5, 25010]
 
@@ -204,6 +203,7 @@ def compute_irtr_recall(pl_module):
     ir_r10 = (tiids.unsqueeze(0) == topk10_iids).float().max(dim=0)[0].mean()
     ir_r5 = (tiids.unsqueeze(0) == topk5_iids).float().max(dim=0)[0].mean()
     ir_r1 = (tiids.unsqueeze(0) == topk1_iids).float().max(dim=0)[0].mean()
+    # print((ir_r1, ir_r5, ir_r10, tr_r1, tr_r5, tr_r10))
 
     return (ir_r1, ir_r5, ir_r10, tr_r1, tr_r5, tr_r10)
 

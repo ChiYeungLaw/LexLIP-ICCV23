@@ -134,9 +134,9 @@ def task_contrastive_train():
     training_mode = "con"
 
 @ex.named_config
-def task_Text_only_MAE_Contrastive_train():
+def task_Text_MAE_Contrastive_train():
     exp_name = "Text_only_MAE_Contrastive"
-    datasets = ["gcc", "f30k", "coco", "sbu"]
+    datasets = ["f30k"]
     loss_names = _loss_names({
         "contrastive": 1,
         "i2t": 1,
@@ -165,7 +165,7 @@ def task_Text_only_MAE_Contrastive_train():
 @ex.named_config
 def task_IRTR_evaluate():
     exp_name = "IRTR_Evaluate"
-    datasets = ["coco"]
+    datasets = ["f30k"]
     loss_names = _loss_names({"contrastive": 0})
     whole_word_masking = True
     test_only = True
@@ -189,6 +189,33 @@ def beit16_base224():
     vit = "microsoft/beit-base-patch16-224-pt22k-ft22k"
     patch_size = 16
     image_size = 224
+    train_transform_keys = ["vit"]
+    val_transform_keys = ["vit"]
+    input_image_embed_size = 768
+
+@ex.named_config
+def vit32_base224():
+    vit = "google/vit-base-patch32-224-in21k"
+    patch_size = 32
+    image_size = 224
+    train_transform_keys = ["vit"]
+    val_transform_keys = ["vit"]
+    input_image_embed_size = 768
+
+@ex.named_config
+def vit16_base224():
+    vit = "google/vit-base-patch16-224-in21k"
+    patch_size = 16
+    image_size = 224
+    train_transform_keys = ["vit"]
+    val_transform_keys = ["vit"]
+    input_image_embed_size = 768
+
+@ex.named_config
+def vit16_base384():
+    vit = "google/vit-base-patch16-384"
+    patch_size = 16
+    image_size = 384
     train_transform_keys = ["vit"]
     val_transform_keys = ["vit"]
     input_image_embed_size = 768

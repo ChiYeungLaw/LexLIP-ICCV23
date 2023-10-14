@@ -6,6 +6,8 @@ import os
 
 from PIL import Image, ImageFile
 from ..transforms import keys_to_transforms
+
+from transformers import ViTFeatureExtractor
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 class CsvDataset(torch.utils.data.Dataset):
@@ -27,17 +29,13 @@ class CsvDataset(torch.utils.data.Dataset):
         max_text_len=40,
         image_only=False,
     ):
-        """
-        data_dir : where dataset file *.arrow lives; existence should be guaranteed via DataModule.prepare_data
-        transform_keys : keys for generating augmented views of images
-        """
         assert len(transform_keys) >= 1
         super().__init__()
         self.data_dir = f"{data_dir}/{dataset_name}"
         self.image_only = image_only
         self.input_filename = input_filename
         if input_filename is not None:
-            df = pd.read_csv(f"{self.data_dir}/{input_filename}", sep=sep)#, nrows=1400000)
+            df = pd.read_csv(f"{self.data_dir}/{input_filename}", sep=sep)
             self.images = df[img_key].tolist()
         else:
             self.images = None
@@ -46,9 +44,7 @@ class CsvDataset(torch.utils.data.Dataset):
             self.captions = df[caption_key].tolist()
         if img_id_key and input_filename is not None:
             self.img_ids = df[img_id_key].tolist()
-        ####
         self.transforms = keys_to_transforms(transform_keys, size=image_size)
-        ####
         self.max_text_len = max_text_len
         self.image_size = image_size
         self.patch_size = patch_size
@@ -60,14 +56,9 @@ class CsvDataset(torch.utils.data.Dataset):
     def get_image(self, idx):
         image_features = self.transforms[0](Image.open(f"{self.data_dir}/{str(self.images[idx])}")).unsqueeze(0)
         num_patches = (self.image_size // self.patch_size) ** 2
-        # create random boolean mask of shape (batch_size, num_patches)
-        encoder_image_masks = (torch.randint(low=0, high=10, size=(1, num_patches)) < 3).bool()
-        decoder_image_masks = torch.randint(low=0, high=2, size=(1, num_patches)).bool()
 
         return {
             "image_features": image_features, # [1, 3, H, W]
-            "encoder_image_masks": encoder_image_masks, # [1, num_patches]
-            "decoder_image_masks": decoder_image_masks,
             "raw_index": idx,
             "img_index": int(self.img_ids[idx]) if self.img_ids else -100,
             "img_dirs": f"{self.data_dir}/{str(self.images[idx])}",
@@ -110,11 +101,7 @@ class CsvDataset(torch.utils.data.Dataset):
         dict_batch = {k: [dic[k] if k in dic else None for dic in batch] for k in keys}
 
         batch_image_features = torch.cat(dict_batch["image_features"], dim=0) # [bs, 3, H, W]
-        batch_encoder_image_masks = torch.cat(dict_batch["encoder_image_masks"], dim=0) # [bs, num_patches]
-        batch_decoder_image_masks = torch.cat(dict_batch["decoder_image_masks"], dim=0) # [bs, num_patches]
         dict_batch["image_features"] = batch_image_features
-        dict_batch["encoder_image_masks"] = batch_encoder_image_masks
-        dict_batch["decoder_image_masks"] = batch_decoder_image_masks
 
         txt_keys = [k for k in list(dict_batch.keys()) if "text" in k]
 

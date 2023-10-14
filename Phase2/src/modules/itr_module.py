@@ -25,28 +25,42 @@ class ITRTransformerSS(pl.LightningModule):
                 BertForMaskedLM.from_pretrained(config['tokenizer'])
             torch.distributed.barrier()
         
-        #####################################################################################
         self.image_transformer = BeitForMaskedImageModeling.from_pretrained(config["vit"])
         self.text_transformer = BertForMaskedLM.from_pretrained(config['tokenizer'])
-        #####################################################################################
         self.mlm_head_for_image = copy.deepcopy(self.text_transformer.cls)
+
         
         itr_utils.set_metrics(self)
         self.current_tasks = list()
 
         self.T = config["temperature"]
         self.training_mode = config["training_mode"]
+        self.inter_pos = True if config["image_size"] > 225 else False
+        self.DR = config["DR"]
 
-        # del self.text_transformer.decoder_heads
+        # MoCo Encoder
+        self.moco_image_transformer = copy.deepcopy(self.image_transformer)
+        self.moco_text_transformer = copy.deepcopy(self.text_transformer)
+        self.moco_mlm_head_for_image = copy.deepcopy(self.mlm_head_for_image)
+        for m in [self.moco_image_transformer, self.moco_text_transformer, self.moco_mlm_head_for_image]:
+            for params in m.parameters():
+                params.requires_grad = False  # not update by gradient
+        self.m = 0.99
+        
+        # create the negative sample queue for contrastive learning
+        self.queue_size = config["queue_size"]
+        self.register_buffer("image_queue", torch.randn(config["vocab_size"], self.queue_size))
+        self.image_queue = nn.functional.normalize(self.image_queue, dim=0)
+        self.register_buffer("text_queue", torch.randn(config["vocab_size"], self.queue_size))
+        self.text_queue = nn.functional.normalize(self.text_queue, dim=0)
+        self.register_buffer("image_queue_ptr", torch.zeros(1, dtype=torch.long))
+        self.register_buffer("text_queue_ptr", torch.zeros(1, dtype=torch.long))
 
-        # ===================== load downstream (test_only) ======================
-        #  and self.hparams.config["test_only"]
+
         if self.hparams.config["load_path"] != "":
             ckpt = torch.load(self.hparams.config["load_path"], map_location="cpu")
             state_dict = ckpt["state_dict"]
             self.load_state_dict(state_dict, strict=False)
-        
-        # del self.text_transformer.decoder_heads
         
     def encode_image(
         self,
@@ -57,6 +71,7 @@ class ITRTransformerSS(pl.LightningModule):
         sequence_output = self.image_transformer(
             pixel_values=image_features,
             bool_masked_pos=image_masks,
+            interpolate_pos=self.inter_pos,
         )
         mlm_logits = self.mlm_head_for_image(sequence_output)
         
@@ -84,7 +99,26 @@ class ITRTransformerSS(pl.LightningModule):
             bottleneck_repre = pooled_enc_probs
 
         return bottleneck_repre
+    
+    def encode_moco_image(
+        self,
+        image_features,
+    ):
+        sequence_output = self.moco_image_transformer(
+            pixel_values=image_features,
+            interpolate_pos=self.inter_pos,
+        )
+        mlm_logits = self.moco_mlm_head_for_image(sequence_output)        
         
+        # for contrastive pretraining
+        mlm_logits = torch.max(mlm_logits, torch.zeros_like(mlm_logits))
+        pooled_enc_logits = torch.max(mlm_logits, dim=1)[0] # [bsz, vocab_size]
+        pooled_enc_probs = torch.log(1 + pooled_enc_logits)
+        bottleneck_repre = pooled_enc_probs
+
+        return bottleneck_repre
+
+    
     def encode_text(
         self,
         text_ids,
@@ -132,6 +166,26 @@ class ITRTransformerSS(pl.LightningModule):
 
         return encoder_logits, bottleneck_repre
     
+    def encode_moco_text(
+        self,
+        text_ids,
+        text_masks, # [bsz, seq_len]
+    ):
+        outputs = self.moco_text_transformer(
+            input_ids=text_ids,
+            attention_mask=text_masks,
+        )
+        mlm_logits = outputs.logits # [bsz, seq_len, vocab_size]
+        mlm_logits = mlm_logits + (1 - text_masks.unsqueeze(-1)) * (-1e6)
+
+        # for contrastive pretraining
+        mlm_logits = torch.max(mlm_logits, torch.zeros_like(mlm_logits))
+        pooled_enc_logits = torch.max(mlm_logits, dim=1)[0] # [bsz, vocab_size]
+        pooled_enc_probs = torch.log(1 + pooled_enc_logits)
+        bottleneck_repre = pooled_enc_probs # [bsz, vocab_size]
+
+        return bottleneck_repre
+
     def decode_text(
         self,
         text_ids,
@@ -155,13 +209,23 @@ class ITRTransformerSS(pl.LightningModule):
         text_ids_con = batch["text_ids"]
         text_labels = batch[f"encoder_text_labels_mlm"]
         text_masks = batch[f"text_masks"]
-        image_features = batch[f"image_features"]
+        if self.DR:
+            image_features = batch[f"image_features"] if random.randint(0,1) > 0.5 else batch[f"image_features_small"]
+        else:
+            image_features = batch[f"image_features"]
 
         text_mlm_logits, text_bottleneck_repre = self.encode_text(text_ids, text_masks, text_ids_con)
         image_bottleneck_repre = self.encode_image(
-            image_features, image_masks=None,#image_masks,
+            image_features, image_masks=None,
             word_embeddings_matrix=self.text_transformer.bert.get_input_embeddings().weight.data.detach(),
         )
+
+        # moco encode
+        moco_text_bottleneck_repre = None
+        moco_image_bottleneck_repre = None
+        with torch.no_grad():
+            moco_text_bottleneck_repre = self.encode_moco_text(text_ids_con, text_masks)
+            moco_image_bottleneck_repre = self.encode_moco_image(image_features)
 
         ret = {
             "self_t_logits": text_mlm_logits,
@@ -171,6 +235,8 @@ class ITRTransformerSS(pl.LightningModule):
             "encoder_text_labels_mlm": text_labels,
             "image_features": image_features,
             "data_dir": batch['img_dirs'],
+            "moco_text_bottleneck_repre": moco_text_bottleneck_repre,
+            "moco_image_bottleneck_repre": moco_image_bottleneck_repre,
         }
 
         return ret
@@ -211,6 +277,9 @@ class ITRTransformerSS(pl.LightningModule):
         ret = dict()
 
         ret.update(self.infer(batch))
+
+        with torch.no_grad():
+            self._momentum_update_encoder()
 
         if "contrastive" in self.current_tasks:
             ret.update(objectives.compute_contrastive(self, ret))
@@ -258,7 +327,7 @@ class ITRTransformerSS(pl.LightningModule):
     
     def gather(self, tensor):
         world_size = dist_utils.get_world_size()
-
+        
         gathered_tensor = [torch.zeros_like(tensor) for _ in range(world_size)]
         dist.all_gather(gathered_tensor, tensor)
         # ensure grads for local rank when all_* features don't have a gradient
@@ -266,3 +335,69 @@ class ITRTransformerSS(pl.LightningModule):
         all_tensor = torch.cat(gathered_tensor, dim=0)
         
         return all_tensor
+    
+    def gather_nograd(self, tensor):
+        world_size = dist_utils.get_world_size()
+        
+        gathered_tensor = [torch.zeros_like(tensor) for _ in range(world_size)]
+        dist.all_gather(gathered_tensor, tensor)
+        all_tensor = torch.cat(gathered_tensor, dim=0)
+        
+        return all_tensor
+    
+    def _dequeue_and_enqueue(self, keys, mode="text"):
+        # gather keys before updating queue
+        keys = concat_all_gather(keys.contiguous())
+        batch_size = keys.shape[0]
+        if mode == "text":
+            ptr = int(self.text_queue_ptr)
+        elif mode == "image":
+            ptr = int(self.image_queue_ptr)
+        # assert pl_module.queue_size % batch_size == 0  # for simplicity
+
+        # replace the keys at ptr (dequeue and enqueue)
+        if mode == "text":
+            queue_size = self.text_queue.size(1)
+            if ptr + batch_size >= queue_size:
+                self.text_queue[:, ptr:queue_size] = keys.T[:, :queue_size-ptr]
+                ptr = 0
+            else:
+                self.text_queue[:, ptr:ptr + batch_size] = keys.T
+                ptr = (ptr + batch_size) % self.queue_size  # move pointer
+            self.text_queue_ptr[0] = ptr
+        elif mode == "image":
+            queue_size = self.image_queue.size(1)
+            if ptr + batch_size >= queue_size:
+                self.image_queue[:, ptr:queue_size] = keys.T[:, :queue_size-ptr]
+                ptr = 0
+            else:
+                self.image_queue[:, ptr:ptr + batch_size] = keys.T
+                ptr = (ptr + batch_size) % self.queue_size  # move pointer
+            self.image_queue_ptr[0] = ptr
+    
+    @torch.no_grad()
+    def _momentum_update_encoder(self):
+        """
+        Momentum update of the key encoder
+        """
+        for param_q, param_k in zip(self.image_transformer.parameters(), self.moco_image_transformer.parameters()):
+            param_k.data = param_k.data * self.m + param_q.data * (1. - self.m)
+        
+        for param_q, param_k in zip(self.text_transformer.parameters(), self.moco_text_transformer.parameters()):
+            param_k.data = param_k.data * self.m + param_q.data * (1. - self.m)
+        
+        for param_q, param_k in zip(self.mlm_head_for_image.parameters(), self.moco_mlm_head_for_image.parameters()):
+            param_k.data = param_k.data * self.m + param_q.data * (1. - self.m)
+
+@torch.no_grad()
+def concat_all_gather(tensor):
+    """
+    Performs all_gather operation on the provided tensors.
+    *** Warning ***: torch.distributed.all_gather has no gradient.
+    """
+    tensors_gather = [torch.ones_like(tensor)
+        for _ in range(torch.distributed.get_world_size())]
+    torch.distributed.all_gather(tensors_gather, tensor, async_op=False)
+
+    output = torch.cat(tensors_gather, dim=0)
+    return output
