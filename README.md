@@ -10,9 +10,9 @@ Official PyTorch implementation for ICCV23 paper **LexLIP: Lexicon-Bottlenecked 
 
 ## LexLIP Training and Inference
 
-[Codes](ChiYeungLaw/LexLIP-ICCV23/Phase1) for Phase 1: Lexicon-Bottlenecked Pre-training
+[Codes](Phase1) for Phase 1: Lexicon-Bottlenecked Pre-training
 
-[Codes](ChiYeungLaw/LexLIP-ICCV23/Phase2) for Phase 2: Momentum Lexicon-Contrastive Pretraining
+[Codes](Phase2) for Phase 2: Momentum Lexicon-Contrastive Pretraining
 
 ## Pre-Training and Evaluation Data Downloads
 
