@@ -44,3 +44,7 @@ If you find this repository useful, please consider giving a star :star: and cit
   year={2023}
 }
 ```
+
+## Acknowledgements
+
+The code is based on [ViLT](https://github.com/dandelin/ViLT) and [METER](https://github.com/zdou0830/METER/tree/main).
